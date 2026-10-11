@@ -1,0 +1,80 @@
+# Module 05: externalized configuration. Every value here can be overridden by an
+# environment variable (app.jwt.secret -> APP_JWT_SECRET) or a command-line flag.
+spring:
+  application:
+    name: backend-zero-to-hero
+  datasource:
+    url: jdbc:h2:mem:bookstore;DB_CLOSE_DELAY=-1
+    username: sa
+    password: ""
+  jpa:
+    # Flyway owns the schema (module 11); Hibernate only checks that entities match it.
+    hibernate:
+      ddl-auto: validate
+    # Don't keep a database session open while the JSON response is written (module 23).
+    open-in-view: false
+  threads:
+    # Module 23: serve each request on a virtual thread (Java 21).
+    virtual:
+      enabled: true
+  cache:
+    # Module 14: in-memory Caffeine caches.
+    cache-names: books
+    caffeine:
+      spec: maximumSize=500,expireAfterWrite=10m
+
+app:
+  greeting:
+    prefix: Hello
+    exclaim: true
+  jwt:
+    # Development-only key. In production set APP_JWT_SECRET to a long random value.
+    secret: ${APP_JWT_SECRET:dev-only-secret-change-me-please-32-bytes-minimum!!}
+    ttl: 1h
+    issuer: backend-zero-to-hero
+  exchange-rates:
+    base-url: https://api.frankfurter.app
+  low-stock:
+    threshold: 3
+  rate-limit:
+    capacity: 100
+    refill-per-second: 50
+
+# Module 17: resilience settings for the exchange-rate client.
+resilience4j:
+  circuitbreaker:
+    instances:
+      exchangeRates:
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 30s
+  retry:
+    instances:
+      exchangeRates:
+        max-attempts: 3
+        wait-duration: 200ms
+
+# Module 18: observability.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+      probes:
+        enabled: true
+  info:
+    env:
+      enabled: true
+
+info:
+  app:
+    description: Bookstore API built across the Zero to Hero course
+
+logging:
+  pattern:
+    # Module 18: every log line carries the request's correlation id.
+    correlation: "[%X{correlationId:-}] "

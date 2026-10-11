@@ -1,0 +1,8 @@
+# Settings for tests that use @ActiveProfiles("test").
+app:
+  outbox:
+    # Tests call OutboxRelay.publishPending() themselves; don't let the scheduler race them.
+    poll-interval: PT1H
+  rate-limit:
+    capacity: 10000
+    refill-per-second: 10000

@@ -1,0 +1,65 @@
+# Module 24: a minimal Kubernetes deployment. Create the secret first:
+#   kubectl create secret generic bookstore-secrets \
+#     --from-literal=APP_JWT_SECRET=... --from-literal=DB_PASSWORD=...
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bookstore
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: bookstore
+  strategy:
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: bookstore
+    spec:
+      terminationGracePeriodSeconds: 40
+      containers:
+        - name: bookstore
+          image: ghcr.io/sunilkumarsunil35/backend-zero-to-hero:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: postgres
+            - name: DB_URL
+              value: jdbc:postgresql://postgres:5432/bookstore
+            - name: DB_USER
+              value: bookstore
+          envFrom:
+            - secretRef:
+                name: bookstore-secrets
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              memory: 768Mi
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8080
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bookstore
+spec:
+  selector:
+    app: bookstore
+  ports:
+    - port: 80
+      targetPort: 8080

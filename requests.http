@@ -1,0 +1,60 @@
+### Try the API from IntelliJ IDEA or VS Code (REST Client extension), or copy the curl lines.
+### Start the app first: mvn spring-boot:run
+
+### Module 06: list books (paged, filtered, sorted)
+# curl "http://localhost:8080/api/books?title=java&sort=price,desc&size=5"
+GET http://localhost:8080/api/books?title=java&sort=price,desc&size=5
+
+### Module 06: one book
+GET http://localhost:8080/api/books/1
+
+### Module 07: a missing book returns a Problem Details body
+GET http://localhost:8080/api/books/999
+
+### Module 13: log in (users: reader/reader-pass, admin/admin-pass)
+# curl -X POST localhost:8080/api/auth/token -H 'Content-Type: application/json' -d '{"username":"admin","password":"admin-pass"}'
+POST http://localhost:8080/api/auth/token
+Content-Type: application/json
+
+{"username": "admin", "password": "admin-pass"}
+
+> {% client.global.set("token", response.body.accessToken); %}
+
+### Module 13: create a book (admin only)
+POST http://localhost:8080/api/books
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{"title": "Clean Architecture", "isbn": "978-0-13-449416-6", "price": 39.99, "stock": 5, "authorId": 2}
+
+### Module 07: invalid input lists every bad field
+POST http://localhost:8080/api/books
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{"title": "", "isbn": "123", "price": -1, "stock": -5}
+
+### Modules 10 and 19: place an order, safe to retry with the same Idempotency-Key
+POST http://localhost:8080/api/orders
+Authorization: Bearer {{token}}
+Idempotency-Key: 7f9c2a40-first-try
+Content-Type: application/json
+
+{"items": [{"bookId": 1, "quantity": 2}, {"bookId": 3, "quantity": 1}]}
+
+### Module 10: my orders
+GET http://localhost:8080/api/orders
+Authorization: Bearer {{token}}
+
+### Module 17: price in another currency (calls an external exchange-rate API)
+GET http://localhost:8080/api/books/1/price?currency=INR
+
+### Module 18: health, info and metrics (metrics need the admin token)
+GET http://localhost:8080/actuator/health
+
+###
+GET http://localhost:8080/actuator/metrics/bookstore.orders.placed
+Authorization: Bearer {{token}}
+
+### Module 19: the OpenAPI document (Swagger UI: http://localhost:8080/swagger-ui.html)
+GET http://localhost:8080/v3/api-docs
