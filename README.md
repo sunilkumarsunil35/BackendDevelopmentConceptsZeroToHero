@@ -15,10 +15,12 @@ claude.ai, so you can tick a topic on your phone on the bus and see it on your l
 
 That link is the repo owner's private synced copy. Anyone can use the same tracker from
 [`tracker/index.html`](tracker/index.html), published at
-https://sunilkumarsunil35.github.io/BackendDevelopmentConceptsZeroToHero/ once GitHub Pages is
-turned on (Settings > Pages > Source: GitHub Actions). That copy saves progress in the browser, and
-its **Backup and move progress** panel copies a backup code you can paste into another browser or
-into the synced tracker.
+https://sunilkumarsunil35.github.io/BackendDevelopmentConceptsZeroToHero/. That copy saves progress
+in the browser. To sync it across devices, open its **Sync across devices** panel, create a GitHub
+token with only the `gist` permission, paste it and choose Connect. Do that once on each device:
+progress then saves to a private gist in your GitHub account and loads from it whenever you open the
+page. The token stays in that browser. The **Backup and move progress** panel still copies a backup
+code you can paste into another browser or into the synced tracker.
 
 ## Run the tests
 
