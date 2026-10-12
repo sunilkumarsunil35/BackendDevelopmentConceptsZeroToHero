@@ -1,0 +1,9 @@
+# Module 24: run against PostgreSQL. Start it with `docker compose up` and
+# run the app with SPRING_PROFILES_ACTIVE=postgres.
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/bookstore}
+    username: ${DB_USER:bookstore}
+    password: ${DB_PASSWORD:bookstore}
+    hikari:
+      maximum-pool-size: 10
