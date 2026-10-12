@@ -133,6 +133,9 @@ header.top p { margin: 6px 0 0; color: var(--muted); }
 /* Backup */
 .backup-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .backup textarea { width: 100%; min-height: 84px; resize: vertical; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--bg); font-family: var(--mono); font-size: 12px; }
+.backup input { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--bg); color: var(--ink); font-family: var(--mono); font-size: 12px; }
+.gist-box:not([hidden]) { display: flex; flex-direction: column; gap: 10px; }
+.backup ol { margin: 0; padding-left: 18px; font-size: 13px; color: var(--muted); display: flex; flex-direction: column; gap: 4px; }
 .msg { font-size: 13px; color: var(--muted); }
 .msg[data-kind="ok"] { color: var(--ok); }
 .msg[data-kind="err"] { color: var(--hard); }
@@ -244,6 +247,28 @@ details.add summary { cursor: pointer; font-weight: 600; color: var(--accent); }
         <h2 id="heat-h" class="label">Topics done, last 12 weeks</h2>
         <div class="heat" id="heat" role="img" aria-label="Daily completed topics heatmap"></div>
         <div class="heat-foot"><span id="heat-start"></span><span>Today</span></div>
+      </section>
+
+      <section class="panel backup" id="gist-panel" aria-labelledby="gist-h" hidden>
+        <h2 id="gist-h" class="label">Sync across devices</h2>
+        <div class="gist-box" id="gist-off">
+          <p>Save your progress to a private GitHub gist so it follows you to your phone and other computers. Set this up once on each device.</p>
+          <ol>
+            <li><a href="https://github.com/settings/tokens/new?scopes=gist&amp;description=Backend%20Zero%20to%20Hero%20tracker" target="_blank" rel="noopener">Create a GitHub token</a> with only the <b>gist</b> permission, and copy it.</li>
+            <li>Paste it here and choose Connect.</li>
+          </ol>
+          <label class="label" for="gist-token">GitHub token</label>
+          <input id="gist-token" type="password" autocomplete="off" spellcheck="false" placeholder="ghp_… or github_pat_…">
+          <div class="backup-actions"><button type="button" class="btn" id="gist-connect">Connect</button></div>
+        </div>
+        <div class="gist-box" id="gist-on" hidden>
+          <p id="gist-info">Progress saves to your private gist and loads from it whenever you open this page.</p>
+          <div class="backup-actions">
+            <button type="button" class="btn ghost" id="gist-now">Sync now</button>
+            <button type="button" class="btn ghost" id="gist-disconnect">Disconnect this device</button>
+          </div>
+        </div>
+        <span class="msg" id="gist-msg" role="status"></span>
       </section>
 
       <section class="panel backup" aria-labelledby="backup-h">
@@ -659,6 +684,7 @@ details.add summary { cursor: pointer; font-weight: 600; color: var(--accent); }
   // ---- state ----
   let progress = {}; // id -> {status, notes, doneOn, updatedAt}
   let custom = {}; // docId -> {title, topic, level, url, createdAt}
+  let removed = {}; // docId -> removedAt, so a deleted custom topic stays deleted when devices merge
   let mode = "loading"; // loading | db | local | readonly
   let db = null;
   const filter = { q: "", status: "all", level: "all", kind: "all", topics: null, label: "" };
@@ -694,6 +720,10 @@ details.add summary { cursor: pointer; font-weight: 600; color: var(--accent); }
   let pendingWrites = 0;
   function refreshSync() {
     if (mode === "db") setSync(pendingWrites ? "saving" : "synced", pendingWrites ? "Saving…" : "Synced across your devices");
+    else if (mode === "local" && gist) {
+      if (gistState === "error") setSync("error", gistError);
+      else setSync(gistState === "saving" ? "saving" : "synced", gistState === "saving" ? "Syncing…" : "Synced with your GitHub gist");
+    }
     else if (mode === "local") setSync("local", "Saved in this browser only");
     else if (mode === "readonly") setSync("readonly", "View only");
   }
@@ -707,11 +737,17 @@ details.add summary { cursor: pointer; font-weight: 600; color: var(--accent); }
         const data = JSON.parse(raw);
         progress = data.progress || {};
         custom = data.custom || {};
+        removed = data.removed || {};
       }
     } catch (e) { /* storage unavailable: start empty */ }
   }
   function saveLocal() {
-    try { localStorage.setItem(LS_KEY, JSON.stringify({ progress, custom })); } catch (e) { /* ignore */ }
+    try { localStorage.setItem(LS_KEY, JSON.stringify({ progress, custom, removed })); } catch (e) { /* ignore */ }
+  }
+  // A change made on this device: keep it in the browser and send it to the gist when sync is on.
+  function persist() {
+    saveLocal();
+    scheduleGistPush();
   }
 
   const chains = {};
@@ -747,7 +783,7 @@ details.add summary { cursor: pointer; font-weight: 600; color: var(--accent); }
   }
 
   function writeProgress(id) {
-    if (mode === "local") return saveLocal();
+    if (mode === "local") return persist();
     if (mode !== "db") return;
     const body = Object.assign({}, progress[id]);
     queueWrite("p:" + id, () => db.collection("progress").doc(id).set(body));
@@ -775,7 +811,7 @@ details.add summary { cursor: pointer; font-weight: 600; color: var(--accent); }
   function addCustom(data) {
     const docId = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
     custom[docId] = data;
-    if (mode === "local") saveLocal();
+    if (mode === "local") persist();
     else if (mode === "db") queueWrite("c:" + docId, () => db.collection("custom").doc(docId).set(data));
     renderAll();
   }
@@ -785,7 +821,7 @@ details.add summary { cursor: pointer; font-weight: 600; color: var(--accent); }
     delete custom[docId];
     delete progress[pid];
     openNotes.delete(pid);
-    if (mode === "local") saveLocal();
+    if (mode === "local") { removed[docId] = Date.now(); persist(); }
     else if (mode === "db") {
       queueWrite("c:" + docId, () => db.collection("custom").doc(docId).delete());
       queueWrite("p:" + pid, () => db.collection("progress").doc(pid).delete());
@@ -800,8 +836,11 @@ details.add summary { cursor: pointer; font-weight: 600; color: var(--accent); }
     el.dataset.kind = kind || "";
   }
 
+  function stateJson() {
+    return JSON.stringify({ app: "backend-zero-to-hero", v: 1, progress, custom, removed });
+  }
   function backupCode() {
-    return JSON.stringify({ app: "backend-zero-to-hero", v: 1, exportedAt: new Date().toISOString(), progress, custom });
+    return JSON.stringify({ app: "backend-zero-to-hero", v: 1, exportedAt: new Date().toISOString(), progress, custom, removed });
   }
 
   async function copyBackup() {
@@ -818,19 +857,25 @@ details.add summary { cursor: pointer; font-weight: 600; color: var(--accent); }
     }
   }
 
-  function restoreBackup() {
-    if (mode === "readonly" || mode === "loading") { backupMsg("You can't restore in view-only mode.", "err"); return; }
-    let data;
-    try { data = JSON.parse($("backup-text").value.trim()); } catch (e) { data = null; }
-    if (!data || data.app !== "backend-zero-to-hero" || typeof data.progress !== "object") {
-      backupMsg("That isn't a backup code from this tracker. Paste the whole code and try again.", "err");
-      return;
-    }
+  const isTrackerData = (data) => !!data && data.app === "backend-zero-to-hero" && typeof data.progress === "object";
+
+  // Merge another copy of the progress into this one. For each topic the most recent update wins;
+  // custom topics are added unless either side deleted them. Returns how many items changed here.
+  function mergeData(data) {
     let changed = 0;
-    // Merge: for each topic, keep whichever copy was updated most recently.
+    for (const [docId, at] of Object.entries(data.removed || {})) {
+      if (typeof at !== "number") continue;
+      if (!removed[docId] || at > removed[docId]) removed[docId] = at;
+      if (custom[docId]) {
+        delete custom[docId];
+        delete progress["c-" + docId];
+        changed++;
+      }
+    }
     for (const [id, rec] of Object.entries(data.progress || {})) {
       if (!rec || typeof rec !== "object" || !STATUSES.some(([s]) => s === rec.status)) continue;
       if (!baseIds.has(id) && !id.startsWith("c-")) continue;
+      if (id.startsWith("c-") && removed[id.slice(2)]) continue;
       const mine = progress[id];
       if (!mine || (rec.updatedAt || 0) > (mine.updatedAt || 0)) {
         progress[id] = {
@@ -842,15 +887,172 @@ details.add summary { cursor: pointer; font-weight: 600; color: var(--accent); }
       }
     }
     for (const [docId, c] of Object.entries(data.custom || {})) {
-      if (custom[docId] || !c || !c.title || !topicById[c.topic]) continue;
+      if (custom[docId] || removed[docId] || !c || !c.title || !topicById[c.topic]) continue;
       custom[docId] = { title: String(c.title).slice(0, 120), topic: c.topic, level: LEVELS[c.level] ? c.level : "I",
         url: /^https?:\/\//i.test(c.url || "") ? String(c.url).slice(0, 300) : null, createdAt: c.createdAt || Date.now() };
       changed++;
       if (mode === "db") { const body = custom[docId]; queueWrite("c:" + docId, () => db.collection("custom").doc(docId).set(body)); }
     }
-    if (mode === "local") saveLocal();
+    return changed;
+  }
+
+  function restoreBackup() {
+    if (mode === "readonly" || mode === "loading") { backupMsg("You can't restore in view-only mode.", "err"); return; }
+    let data;
+    try { data = JSON.parse($("backup-text").value.trim()); } catch (e) { data = null; }
+    if (!isTrackerData(data)) {
+      backupMsg("That isn't a backup code from this tracker. Paste the whole code and try again.", "err");
+      return;
+    }
+    const changed = mergeData(data);
+    if (mode === "local") persist();
     renderAll();
     backupMsg(changed ? `Restored ${changed} item${changed === 1 ? "" : "s"}. Newer progress on this device was kept.` : "Nothing to restore: this device already has the same or newer progress.", "ok");
+  }
+
+  // ---- GitHub gist sync (for the copy on GitHub Pages, which has no Claude storage) ----
+  // The token and gist id stay in this browser. Every save pulls the gist, merges, then writes the
+  // merged copy back, so two devices editing between syncs don't overwrite each other.
+  const GIST_KEY = "backend-zero-to-hero-gist";
+  const GIST_FILE = "backend-zero-to-hero-progress.json";
+  let gist = null; // {token, id}
+  let gistState = "ok"; // ok | saving | error
+  let gistError = "";
+  let gistTimer = null;
+  let gistRunning = null;
+  let gistAgain = false;
+
+  function loadGistCfg() {
+    try {
+      const g = JSON.parse(localStorage.getItem(GIST_KEY) || "null");
+      if (g && g.token) gist = { token: String(g.token), id: g.id ? String(g.id) : null };
+    } catch (e) { gist = null; }
+  }
+  function saveGistCfg() {
+    try {
+      if (gist) localStorage.setItem(GIST_KEY, JSON.stringify(gist));
+      else localStorage.removeItem(GIST_KEY);
+    } catch (e) { /* ignore */ }
+  }
+  function gistMsg(text, kind) {
+    const el = $("gist-msg");
+    el.textContent = text;
+    el.dataset.kind = kind || "";
+  }
+
+  async function gh(path, opts) {
+    const init = Object.assign({ cache: "no-store" }, opts || {});
+    init.headers = { Accept: "application/vnd.github+json", Authorization: "Bearer " + gist.token };
+    if (init.body) init.headers["Content-Type"] = "application/json";
+    const res = await fetch("https://api.github.com" + path, init);
+    if (!res.ok) { const err = new Error("GitHub answered " + res.status); err.status = res.status; throw err; }
+    return res.status === 204 ? null : res.json();
+  }
+
+  async function findOrCreateGist() {
+    for (let page = 1; page <= 10; page++) {
+      const list = await gh("/gists?per_page=100&page=" + page);
+      const hit = list.find((g) => g.files && g.files[GIST_FILE]);
+      if (hit) return hit.id;
+      if (list.length < 100) break;
+    }
+    const made = await gh("/gists", { method: "POST", body: JSON.stringify({
+      description: "Backend Zero to Hero tracker progress", public: false,
+      files: { [GIST_FILE]: { content: stateJson() } },
+    }) });
+    return made.id;
+  }
+
+  async function readGist() {
+    const g = await gh("/gists/" + gist.id);
+    const f = g.files && g.files[GIST_FILE];
+    if (!f) return { text: "", data: null };
+    let text = f.content || "";
+    if (f.truncated && f.raw_url) text = await (await fetch(f.raw_url, { cache: "no-store" })).text();
+    let data = null;
+    try { data = JSON.parse(text); } catch (e) { data = null; }
+    return { text, data: isTrackerData(data) ? data : null };
+  }
+
+  function gistFailed(e) {
+    gistState = "error";
+    if (e && (e.status === 401 || e.status === 403)) gistError = "GitHub didn't accept the sync token. Reconnect sync.";
+    else gistError = "Couldn't reach GitHub. Progress is saved in this browser and will sync later.";
+    gistMsg(gistError, "err");
+  }
+
+  // Pull, merge, and push if this device has anything the gist doesn't.
+  function syncGist() {
+    if (!gist || !gist.id || mode !== "local") return Promise.resolve();
+    if (gistRunning) { gistAgain = true; return gistRunning; }
+    gistState = "saving";
+    refreshSync();
+    gistRunning = (async () => {
+      try {
+        let remote;
+        try { remote = await readGist(); }
+        catch (e) {
+          if (e.status !== 404) throw e;
+          gist.id = await findOrCreateGist(); // the gist was deleted: start a new one
+          saveGistCfg();
+          remote = await readGist();
+        }
+        if (remote.data && mergeData(remote.data)) { saveLocal(); renderAll(); }
+        const mine = stateJson();
+        if (mine !== remote.text) {
+          await gh("/gists/" + gist.id, { method: "PATCH", body: JSON.stringify({ files: { [GIST_FILE]: { content: mine } } }) });
+        }
+        gistState = "ok";
+        gistMsg("Last synced " + new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + ".", "ok");
+      } catch (e) {
+        gistFailed(e);
+      } finally {
+        gistRunning = null;
+        refreshSync();
+        if (gistAgain) { gistAgain = false; syncGist(); }
+      }
+    })();
+    return gistRunning;
+  }
+
+  function scheduleGistPush() {
+    if (!gist || !gist.id) return;
+    clearTimeout(gistTimer);
+    gistState = "saving";
+    refreshSync();
+    gistTimer = setTimeout(syncGist, 1200);
+  }
+
+  async function connectGist() {
+    const token = $("gist-token").value.trim();
+    if (!token) { gistMsg("Paste your GitHub token first.", "err"); return; }
+    $("gist-connect").disabled = true;
+    gistMsg("Connecting to GitHub…", "");
+    gist = { token, id: null };
+    try {
+      gist.id = await findOrCreateGist();
+      saveGistCfg();
+      $("gist-token").value = "";
+      await syncGist();
+      if (gistState === "ok") gistMsg("Connected. This device now syncs with your private gist.", "ok");
+    } catch (e) {
+      gist = null;
+      gistMsg(e && (e.status === 401 || e.status === 403)
+        ? "GitHub didn't accept that token. Check it has the gist permission and hasn't expired."
+        : "Couldn't reach GitHub. Check your connection and try again.", "err");
+    } finally {
+      $("gist-connect").disabled = false;
+      renderAll();
+    }
+  }
+
+  function disconnectGist() {
+    clearTimeout(gistTimer);
+    gist = null;
+    gistState = "ok";
+    saveGistCfg();
+    gistMsg("This device no longer syncs. Your progress stays in this browser and in the gist.", "");
+    renderAll();
   }
 
   // ---- rendering ----
@@ -1033,7 +1235,12 @@ details.add summary { cursor: pointer; font-weight: 600; color: var(--accent); }
     $("backup-restore").disabled = ro;
     $("backup-help").textContent = mode === "db"
       ? "Your progress already syncs to every device where you open this page. A backup code is a safety copy, or a way to bring in progress from the GitHub copy of this tracker."
-      : "This copy saves progress in this browser only. Copy a backup code to keep it safe or to move it to your phone or another computer, then paste it there and restore.";
+      : gist
+        ? "Your progress syncs through your GitHub gist. A backup code is an extra safety copy."
+        : "This copy saves progress in this browser only. Turn on sync above, or copy a backup code to move progress to your phone or another computer.";
+    $("gist-panel").hidden = mode !== "local";
+    $("gist-off").hidden = !!gist;
+    $("gist-on").hidden = !gist;
   }
 
   function renderAll() {
@@ -1068,6 +1275,9 @@ details.add summary { cursor: pointer; font-weight: 600; color: var(--accent); }
     } else if (t.id === "clear-topic") { filter.topics = null; filter.label = ""; renderAll(); }
     else if (t.id === "backup-copy") copyBackup();
     else if (t.id === "backup-restore") restoreBackup();
+    else if (t.id === "gist-connect") connectGist();
+    else if (t.id === "gist-now") syncGist();
+    else if (t.id === "gist-disconnect") disconnectGist();
     else if (t.hasAttribute("data-notes")) {
       const id = t.closest(".row").dataset.id;
       if (openNotes.has(id)) openNotes.delete(id); else openNotes.add(id);
@@ -1126,7 +1336,12 @@ details.add summary { cursor: pointer; font-weight: 600; color: var(--accent); }
     if (!dbNs) {
       mode = "local";
       loadLocal();
+      loadGistCfg();
       renderAll();
+      if (gist && !gist.id) { gist = null; saveGistCfg(); renderAll(); }
+      if (gist) syncGist();
+      // Pick up changes made on another device when you come back to this tab.
+      document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") syncGist(); });
       return;
     }
     db = dbNs;
